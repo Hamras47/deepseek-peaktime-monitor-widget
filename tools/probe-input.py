@@ -10,8 +10,8 @@ log shows `page: gesture (move)` if — and only if — the page really received
 `--drag` additionally drags the card 40px and the corner grip 40x20, with real mouse
 events, and reports whether the window moved and whether it resized.
 
-Note the card is a layered window with its background punched out, so its transparent
-pixels are click-through by design; this checks the card's own pixels, not the corners.
+The window is layered with uniform alpha (never a colour key: keyed pixels are
+click-through, which is exactly the bug this probe exists to catch).
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from __future__ import annotations
 import ctypes
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -35,24 +36,34 @@ MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
 
 
-def log_tail(count: int = 6) -> list[str]:
+def log_lines() -> list[str]:
     if not LOG.exists():
         return []
-    lines = LOG.read_text(encoding="utf-8", errors="replace").strip().splitlines()
+    return LOG.read_text(encoding="utf-8", errors="replace").splitlines()
+
+
+def log_tail(count: int = 6) -> list[str]:
+    lines = log_lines()
     return [line.split("  ", 1)[-1] for line in lines[-count:]]
 
 
-def log_count() -> int:
-    if not LOG.exists():
-        return 0
-    return len(LOG.read_text(encoding="utf-8", errors="replace").splitlines())
+def log_since(moment: datetime) -> list[str]:
+    """Every logged line after ``moment``.
 
-
-def log_since(mark: int) -> list[str]:
-    if not LOG.exists():
-        return []
-    lines = LOG.read_text(encoding="utf-8", errors="replace").splitlines()[mark:]
-    return [line.split("  ", 1)[-1] for line in lines]
+    By timestamp, not by line count: the widget truncates its log when it passes
+    256 KB, and a positional marker then points past the end and reports "nothing
+    happened" while the card is working perfectly.
+    """
+    gained = []
+    for line in log_lines():
+        stamp, _, rest = line.partition("  ")
+        try:
+            when = datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            continue
+        if when >= moment:
+            gained.append(rest)
+    return gained
 
 
 def gesture_result(gained: list[str], kind: str) -> tuple[str, str] | None:
@@ -84,7 +95,7 @@ centre_x, centre_y = (left + right) // 2, (top + bottom) // 2
 print(f"card rect {left},{top} {right - left}x{bottom - top}  (clicking {centre_x},{centre_y})")
 
 before = log_tail()
-mark = log_count()
+mark = datetime.now().replace(microsecond=0)
 print(f"log before: {before[-1] if before else '(empty)'}")
 
 # Raise the card first: if it is sitting behind another window, a click aimed at its
@@ -99,7 +110,6 @@ click()
 time.sleep(0.8)
 
 new = log_since(mark)
-mark = log_count()
 print("log after :")
 for line in new or ["(nothing new)"]:
     print(f"  {line}")
@@ -108,8 +118,13 @@ received = any("gesture" in line or "layout" in line for line in new)
 print(f"\n=> the page {'RECEIVES' if received else 'DOES NOT receive'} mouse input")
 
 if "--drag" in sys.argv and received:
+    # Release anything the click leg may have left mid-gesture, or the host ignores
+    # the next mousedown and the drag looks broken when it is not.
+    _user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+    time.sleep(0.6)
+
     print("\nnow dragging the card 40px right with real mouse events ...")
-    mark = log_count()
+    mark = datetime.now().replace(microsecond=0)
     start = app.window_rect(handle)
     _user32.SetCursorPos(centre_x, centre_y)
     time.sleep(0.3)
@@ -120,14 +135,20 @@ if "--drag" in sys.argv and received:
         time.sleep(0.08)  # the host polls at ~120 Hz; do not outrun it
     time.sleep(0.15)
     _user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
-    time.sleep(1.0)
+    time.sleep(1.2)
+    moved = app.window_rect(handle)
     drag = gesture_result(log_since(mark), "move")
-    print(f"  card rect before: {start[0]},{start[1]}")
-    print(f"  log says moved to: {drag[0] if drag else '(no move gesture)'}")
+    # The rectangle is the honest witness: it is what the user sees, and it cannot
+    # be confused by a neighbouring leg's log lines.
+    print(f"  rect {start[0]},{start[1]} -> {moved[0]},{moved[1]}")
+    print(
+        f"  {'<= the card MOVED' if moved[:2] != start[:2] else '<= the card did not move'}"
+        f"  (log: {drag[0] if drag else 'no move gesture reported'})"
+    )
 
     print("\nnow dragging the corner grip with real mouse events ...")
     for inset in (8, 12, 16, 20):
-        mark = log_count()
+        mark = datetime.now().replace(microsecond=0)
         before = app.window_rect(handle)
         grip_x, grip_y = before[2] - inset, before[3] - inset
         _user32.SetCursorPos(grip_x, grip_y)
@@ -138,17 +159,21 @@ if "--drag" in sys.argv and received:
             _user32.SetCursorPos(grip_x + step * 5, grip_y + step * 3)
             time.sleep(0.08)
         _user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
-        time.sleep(0.9)
+        time.sleep(1.2)
         gained = log_since(mark)
+        after = app.window_rect(handle)
         which = "resize" if any("gesture (resize)" in line for line in gained) else "move"
-        # Whichever gesture it started, the widget logs where it ended up: a resize
-        # reports a new WxH, a move reports a new position, so both are visible here.
-        result = gesture_result(gained, which)
         size = gesture_result(gained, "size")
+        grew = (after[2] - after[0], after[3] - after[1]) != (
+            before[2] - before[0],
+            before[3] - before[1],
+        )
         print(
             f"  inset {inset:>2}: page started a {which}; "
-            f"log: {result[0] + ' ' + result[1] if result else '(nothing)'}"
-            f"{'  <= the grip responded' if which == 'resize' else ''}"
+            f"size {before[2] - before[0]}x{before[3] - before[1]}"
+            f" -> {after[2] - after[0]}x{after[3] - after[1]}"
+            f"{'  <= the grip RESIZED the card' if grew else ''}"
+            f"{(f'  (log: {size[1]})' if size else '')}"
         )
         if which == "resize":
             print(f"  grip centre is inset {inset}px from the corner")
