@@ -138,14 +138,16 @@ DWMWA_SYSTEMBACKDROP_TYPE = 38
 DWMSBT_AUTO = 0
 DWMSBT_TRANSIENTWINDOW = 3  # acrylic
 
-#: WinForms' default form colour.  pywebview leaves it in place on a transparent
-#: window (it makes the *webview* background transparent instead), and it is that
-#: opaque background — not the blur — that shows through the card.  It has to be
-#: punched out with a layered colour key, otherwise the desktop never shows through.
-GLASS_FORM_BACKGROUND = 0x00F0F0F0
+#: WinForms' default form colour shows behind the page, and it is light grey.  The
+#: page therefore paints its own opaque near-black backdrop, and the transparency
+#: comes from a *uniform* window alpha — NOT a colour key: a keyed-out window is
+#: click-through, which made the card impossible to drag (input never reached the
+#: page).  Alpha keeps hit-testing intact.
+GLASS_PAGE_BACKDROP = "#05070a"
 WS_EX_LAYERED = 0x00080000
-LWA_COLORKEY = 0x00000001
 LWA_ALPHA = 0x00000002
+GLASS_ALPHA = 140  # 0-255: how much of the card you see over the desktop
+GLASS_ALPHA_OFF = 255  # the Glass switch off = a solid card
 HWND_TOPMOST = -1
 HWND_NOTOPMOST = -2
 SWP_NOSIZE = 0x0001
@@ -440,13 +442,13 @@ def _set_backdrop(handle: int, kind: int) -> bool:
         return False
 
 
-def _punch_background(handle: int, key: int = GLASS_FORM_BACKGROUND) -> bool:
-    """Make the window's own background transparent, leaving everything else.
+def _set_window_alpha(handle: int, alpha: int = GLASS_ALPHA) -> bool:
+    """Blend the whole window with what is behind it — uniformly, and clickable.
 
-    Everything else about transparency depends on this.  With the window painting an
-    opaque background, both the acrylic accent and the modern system backdrop are
-    hidden behind it — which is exactly how the card ended up an opaque milky slab
-    while every call reported success.
+    A colour key would make the keyed pixels click-through and the card could not be
+    dragged at all (the page never saw a mousedown).  A uniform alpha keeps
+    hit-testing working, and the card is opaque enough that the desktop reads through
+    it without washing the text out.
     """
     try:
         ex_style = int(_user32.GetWindowLongW(ctypes.c_void_p(handle), GWL_EXSTYLE))
@@ -455,27 +457,27 @@ def _punch_background(handle: int, key: int = GLASS_FORM_BACKGROUND) -> bool:
                 ctypes.c_void_p(handle), GWL_EXSTYLE, ex_style | WS_EX_LAYERED
             )
         return bool(
-            _user32.SetLayeredWindowAttributes(ctypes.c_void_p(handle), key, 255, LWA_COLORKEY)
+            _user32.SetLayeredWindowAttributes(ctypes.c_void_p(handle), 0, alpha, LWA_ALPHA)
         )
     except Exception as error:
-        log(f"could not punch the window background out: {error}")
+        log(f"could not set the window alpha: {error}")
         return False
 
 
-def _unpunch_background(handle: int) -> None:
-    """Put the window back to fully opaque (the Glass switch is off)."""
+def _clear_window_alpha(handle: int) -> None:
+    """Back to a fully opaque window (the Glass switch is off)."""
     try:
-        _user32.SetLayeredWindowAttributes(ctypes.c_void_p(handle), 0, 255, LWA_ALPHA)
+        _user32.SetLayeredWindowAttributes(ctypes.c_void_p(handle), 0, GLASS_ALPHA_OFF, LWA_ALPHA)
         ex_style = int(_user32.GetWindowLongW(ctypes.c_void_p(handle), GWL_EXSTYLE))
         _user32.SetWindowLongW(
             ctypes.c_void_p(handle), GWL_EXSTYLE, ex_style & ~WS_EX_LAYERED
         )
     except Exception as error:
-        log(f"could not restore the window background: {error}")
+        log(f"could not restore the window opacity: {error}")
 
 
 def enable_glass(handle: int, radius: int, tint: int) -> tuple[bool, bool]:
-    """Transparent glass.  Returns (blur applied, background punched out)."""
+    """Transparent glass.  Returns (blur applied, window blended with the desktop)."""
     # Dark mode first, so any blur tints to match the card rather than to the system
     # theme.
     try:
@@ -485,11 +487,11 @@ def enable_glass(handle: int, radius: int, tint: int) -> tuple[bool, bool]:
         )
     except Exception:
         pass
-    keyed = _punch_background(handle)
-    # Blur behind those holes: the supported system backdrop where it exists, and the
-    # legacy accent as a fallback for older builds.  Note that the accent still
-    # reports success on Windows 11 build 26200 and is then ignored, so it must never
-    # be the only mechanism.
+    blended = _set_window_alpha(handle)
+    # Blur behind the card where the build supports it: the supported system backdrop
+    # first, and the legacy accent as a fallback.  The accent still reports success on
+    # Windows 11 build 26200 and is then ignored, so it must never be the only
+    # mechanism.
     blurred = _set_backdrop(handle, DWMSBT_TRANSIENTWINDOW)
     if not blurred:
         blurred = _set_accent(handle, ACCENT_ENABLE_ACRYLICBLURBEHIND, tint)
@@ -504,11 +506,11 @@ def enable_glass(handle: int, radius: int, tint: int) -> tuple[bool, bool]:
     except Exception:
         pass
     _round_window(handle, radius)
-    return blurred, keyed
+    return blurred, blended
 
 
 def disable_glass(handle: int) -> None:
-    _unpunch_background(handle)
+    _clear_window_alpha(handle)
     _set_backdrop(handle, DWMSBT_AUTO)
     _set_accent(handle, ACCENT_DISABLED, 0)
     try:
@@ -1149,10 +1151,10 @@ class Widget:
         reason = f", {why}" if why else ""
         try:
             if enabled:
-                blurred, keyed = enable_glass(self.hwnd, GLASS_RADIUS, self.glass_tint())
+                blurred, blended = enable_glass(self.hwnd, GLASS_RADIUS, self.glass_tint())
                 log(
                     f"glass on (blur={'yes' if blurred else 'no'}, "
-                    f"background={'punched out' if keyed else 'opaque'}{reason})"
+                    f"alpha={'yes' if blended else 'no'}{reason})"
                 )
             else:
                 disable_glass(self.hwnd)

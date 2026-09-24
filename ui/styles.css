@@ -76,7 +76,12 @@ body {
   height: 100%;
   margin: 0;
   overflow: hidden;
-  background: transparent;
+  /* Opaque, not transparent: the window behind the page is the WinForms form, whose
+     colour is light grey, and a translucent page lets it show through as a milky
+     wash.  The glass now comes from a uniform window alpha instead (see app.py), and
+     the corners are cut by the window region, so nothing of this shows outside the
+     card. */
+  background: #05070a;
 }
 
 body {

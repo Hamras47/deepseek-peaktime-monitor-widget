@@ -298,26 +298,37 @@ a direct minimize — to prove the card stays on screen.
   Nothing in the log looked wrong — `glass on (acrylic=yes)` printed either way, so
   the return value of that call is not evidence of anything.
 - Fix, in order of what actually matters:
-  1. **Punch the window's own background out** (`WS_EX_LAYERED` +
-     `SetLayeredWindowAttributes(handle, FORM_BACKGROUND, 255, LWA_COLORKEY)`, with
-     `GLASS_FORM_BACKGROUND = 0x00F0F0F0`, WinForms' default form colour).  Until this
-     is done, *every* blur mechanism is hidden behind that opaque background — which
-     is why the modern backdrop below did nothing on its own.
-  2. Ask DWM for the supported backdrop (`DWMWA_SYSTEMBACKDROP_TYPE`,
+  1. **Stop the window painting the form's background.**  The page paints its own
+     opaque near-black backdrop (`html, body { background: #05070a }`), so nothing
+     light grey can show through the card's translucent shades.
+  2. **Blend the whole window with what is behind it** — `WS_EX_LAYERED` +
+     `SetLayeredWindowAttributes(handle, 0, GLASS_ALPHA, LWA_ALPHA)`.  Uniform alpha,
+     deliberately: the first attempt used `LWA_COLORKEY` (punching out the form's
+     #F0F0F0), which looked right but made the card **click-through** — the page never
+     saw a mousedown, so it could not be dragged, resized, or even have its gear
+     clicked, while every one of those still passed `--ui-test` (that test drives the
+     gesture loop with synthetic input and clicks elements through the DOM, so it
+     cannot see a dead window).  Alpha keeps hit-testing intact.
+  3. Ask DWM for the supported backdrop (`DWMWA_SYSTEMBACKDROP_TYPE`,
      `DWMSBT_TRANSIENTWINDOW`) plus `DWMWA_USE_IMMERSIVE_DARK_MODE`, falling back to
-     the accent only if DWM refuses.  With the key in place this adds real blur behind
-     the card where the build supports it.
-  3. Re-apply a few times while the window settles.  pywebview hides and re-shows a
+     the accent only if DWM refuses — that is what adds real blur behind the card.
+  4. Re-apply a few times while the window settles.  pywebview hides and re-shows a
      transparent window as it starts and DWM drops the backdrop when that happens, so
      applying it once (even on "page ready") still came up milky.  `settle_glass()`
      runs it at page-ready, +0.5 s, +2 s and +5 s, and `set_visible` does it again on
      every show.
-- Trap found by the same bug: **hit-testing skips a punched-out card.** `WindowFromPoint`
-  over a layered window with a colour key returns whatever is *behind* it, so the
-  "show desktop buried the card" detection reported buried forever and left the card
-  glued on top. It now walks the top-level Z-order (`GetTopWindow` → `GetWindow(...
-  GW_HWNDNEXT)`): first thing above the card is either the card itself, a desktop window
-  (Progman/WorkerW — lift), or a normal app window (leave it alone).
+- `GLASS_ALPHA` (140/255) is the knob for how much desktop shows through; the text is
+  white on a dark card, so a uniform alpha costs both equally and the contrast holds
+  (about 6:1 over a dark backdrop, 4.5:1 over a bright one, better in `dense`).
+- Verify input with `tools/probe-input.py`: it raises the card, clicks and drags it
+  with **real** mouse events and reports what the widget logged
+  (`page: gesture (move)`, `move gesture done`).  This is the test that catches a
+  click-through window; `--ui-test` cannot.
+- Trap found by the same bug: **hit-testing skips a window with a colour key.** The
+  "show desktop buried the card" detection had to stop using `WindowFromPoint` and walk
+  the top-level Z-order instead (`GetTopWindow` → `GetWindow(GW_HWNDNEXT)`): first thing
+  above the card is either the card itself, a desktop window (Progman/WorkerW — lift),
+  or a normal app window (leave it alone).
 - Third: with the *Glass* switch off there is no blur, and therefore no transparency
   either, so the card used to show white text on the window's light background. The
   payload now carries `glass_enabled` and the page paints a solid dark card
