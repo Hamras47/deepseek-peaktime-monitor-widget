@@ -78,14 +78,16 @@ SCAN_AFTER = timedelta(days=24)
 
 DEFAULT_HOLIDAY_FILE = Path(__file__).resolve().parent / "holidays.json"
 
-#: Selectable timezones.  The first one is the default.
+#: Selectable timezones.  The first one is the default.  The chips show the
+#: standard abbreviation, never a country or city name: `short` is what fits on
+#: the card and `label` is the full name used for tooltips and the tray.
 TIMEZONES: tuple[dict[str, str], ...] = (
     {"id": "auto", "label": "System", "short": "Auto"},
-    {"id": "Asia/Qatar", "label": "Qatar", "short": "Qatar"},
-    {"id": "Asia/Kolkata", "label": "India", "short": "India"},
-    {"id": "Europe/London", "label": "UK", "short": "UK"},
-    {"id": "Asia/Shanghai", "label": "Beijing", "short": "Beijing"},
-    {"id": "UTC", "label": "UTC", "short": "UTC"},
+    {"id": "Asia/Qatar", "label": "Arabian Standard Time (UTC+3)", "short": "AST"},
+    {"id": "Asia/Kolkata", "label": "Indian Standard Time (UTC+5:30)", "short": "IST"},
+    {"id": "Europe/London", "label": "Greenwich Mean Time (GMT / BST)", "short": "GMT"},
+    {"id": "Asia/Shanghai", "label": "UTC+8 (no daylight saving)", "short": "UTC+8"},
+    {"id": "UTC", "label": "Coordinated Universal Time", "short": "UTC"},
 )
 
 #: Windows timezone ids -> IANA, for the "System" option.  The OS exposes a

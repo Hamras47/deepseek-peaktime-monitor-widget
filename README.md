@@ -74,9 +74,20 @@ Everything else hides behind the gear so the card stays a countdown:
 
 ![the options sheet](doc/preview-settings.png)
 
-Timezone chips (Auto, Qatar, India, UK, Beijing, UTC) and four switches —
-Always on top, Start with Windows, Notify, Glass. Preferences, position and size
-live in `config.json` next to the app.
+Timezone chips and four switches — Always on top, Start with Windows, Notify,
+Glass. The chips are named by their standard abbreviation rather than a country,
+and the tooltip gives the full name:
+
+| chip | timezone | offset |
+| --- | --- | --- |
+| Auto | whatever Windows is set to | — |
+| AST | Arabian Standard Time | UTC+3 |
+| IST | Indian Standard Time | UTC+5:30 |
+| GMT | Greenwich Mean Time (BST in summer) | UTC+0 / +1 |
+| UTC+8 | UTC+8, no daylight saving | UTC+8 |
+| UTC | Coordinated Universal Time | UTC+0 |
+
+Preferences, position and size live in `config.json` next to the app.
 
 ![peak](doc/preview-peak.png)
 

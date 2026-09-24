@@ -146,7 +146,7 @@ class Formatting(unittest.TestCase):
 
     def test_tz_abbreviation(self):
         zone, canonical, label = S.resolve_tz("Asia/Kolkata")
-        self.assertEqual(label, "India")
+        self.assertEqual(label, "Indian Standard Time (UTC+5:30)")
         self.assertEqual(canonical, "Asia/Kolkata")
         self.assertEqual(
             S.tz_abbreviation(at("2026-09-24T10:00").astimezone(zone), canonical), "GMT+5:30"
