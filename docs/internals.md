@@ -285,3 +285,47 @@ a direct minimize — to prove the card stays on screen.
   translucent, so the wallpaper showing through changes every pixel, and the status
   dot pulses by design — so it isolates near-white glyph pixels (245+) in the
   countdown band and compares only those.
+
+## The glass went milky (2026-09-24)
+- Symptom: the card turned opaque light grey — a solid panel, not glass. Measured on
+  the card: rgb(168,168,170) where it had been rgb(36,34,33) that morning.
+- Cause, after chasing three wrong theories: pywebview makes a transparent window by
+  setting the *webview's* background transparent and hiding the opaque background of
+  the WinForms form behind it with the **legacy accent policy**
+  (`SetWindowCompositionAttribute` + `ACCENT_ENABLE_ACRYLICBLURBEHIND`).  Windows 11
+  build 26200 still *returns success* for that call and then ignores it, so the form's
+  own default light grey (#F0F0F0) was what showed through the card's dark shades.
+  Nothing in the log looked wrong — `glass on (acrylic=yes)` printed either way, so
+  the return value of that call is not evidence of anything.
+- Fix, in order of what actually matters:
+  1. **Punch the window's own background out** (`WS_EX_LAYERED` +
+     `SetLayeredWindowAttributes(handle, FORM_BACKGROUND, 255, LWA_COLORKEY)`, with
+     `GLASS_FORM_BACKGROUND = 0x00F0F0F0`, WinForms' default form colour).  Until this
+     is done, *every* blur mechanism is hidden behind that opaque background — which
+     is why the modern backdrop below did nothing on its own.
+  2. Ask DWM for the supported backdrop (`DWMWA_SYSTEMBACKDROP_TYPE`,
+     `DWMSBT_TRANSIENTWINDOW`) plus `DWMWA_USE_IMMERSIVE_DARK_MODE`, falling back to
+     the accent only if DWM refuses.  With the key in place this adds real blur behind
+     the card where the build supports it.
+  3. Re-apply a few times while the window settles.  pywebview hides and re-shows a
+     transparent window as it starts and DWM drops the backdrop when that happens, so
+     applying it once (even on "page ready") still came up milky.  `settle_glass()`
+     runs it at page-ready, +0.5 s, +2 s and +5 s, and `set_visible` does it again on
+     every show.
+- Trap found by the same bug: **hit-testing skips a punched-out card.** `WindowFromPoint`
+  over a layered window with a colour key returns whatever is *behind* it, so the
+  "show desktop buried the card" detection reported buried forever and left the card
+  glued on top. It now walks the top-level Z-order (`GetTopWindow` → `GetWindow(...
+  GW_HWNDNEXT)`): first thing above the card is either the card itself, a desktop window
+  (Progman/WorkerW — lift), or a normal app window (leave it alone).
+- Third: with the *Glass* switch off there is no blur, and therefore no transparency
+  either, so the card used to show white text on the window's light background. The
+  payload now carries `glass_enabled` and the page paints a solid dark card
+  (`[data-glass="off"]`) instead.
+- Measuring this is easy to get wrong: the card is translucent, so its colour depends
+  on whatever is behind it, and a capture of the card's rectangle is just as likely to
+  be the window sitting on top of it (I did that twice, and twice drew the wrong
+  conclusion). `tools/check-glass.py` is the reliable test: it compares the card with
+  the desktop *in the same capture* (a translucent card is about as dark as its
+  surroundings; an opaque one is much lighter). It judged the failing card at +140 and
+  the fixed one at +38.

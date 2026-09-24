@@ -101,8 +101,10 @@ function render(next) {
   const root = el('widget');
   root.dataset.mode = next.mode;
   // One material, two densities: "clear" over a dark backdrop, "dense" over a
-  // bright one (see styles.css).  The host samples the desktop and reports it.
-  if (next.glass) root.dataset.glass = next.glass === 'dense' ? 'dense' : 'clear';
+  // bright one (see styles.css).  With the glass switched off there is no native
+  // blur to be transparent with, so the card paints itself solid instead.
+  const on = next.glass_enabled !== false;
+  root.dataset.glass = on ? (next.glass === 'dense' ? 'dense' : 'clear') : 'off';
   if (lastMode && lastMode !== next.mode) {
     report('price flipped to', next.mode);
   }

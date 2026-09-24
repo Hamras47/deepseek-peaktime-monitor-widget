@@ -48,6 +48,21 @@
   --halo: 0 1px 4px rgba(0, 0, 0, 0.6);
 }
 
+/* Glass switched off: no native blur, and without the blur the window is opaque,
+   so the card has to be solid — otherwise white text sits on the window's own
+   light background and the whole thing looks washed out. */
+.widget[data-glass="off"] {
+  --shade-1: rgba(9, 12, 16, 0.97);
+  --shade-2: rgba(9, 12, 16, 0.94);
+  --shade-3: rgba(9, 12, 16, 0.96);
+  --rim: rgba(255, 255, 255, 0.14);
+  --rim-inner: rgba(255, 255, 255, 0.2);
+}
+
+.widget[data-glass="off"] .tint {
+  opacity: 0.35;
+}
+
 .widget[data-mode="peak"] {
   --mode: #ff9aa2;
 }

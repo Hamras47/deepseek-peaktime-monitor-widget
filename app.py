@@ -132,6 +132,20 @@ ACCENT_DISABLED = 0
 ACCENT_ENABLE_ACRYLICBLURBEHIND = 4
 DWMWA_WINDOW_CORNER_PREFERENCE = 33
 DWMWCP_ROUND = 2
+#: Windows 11 backdrop (the supported replacement for the accent below).
+DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+DWMWA_SYSTEMBACKDROP_TYPE = 38
+DWMSBT_AUTO = 0
+DWMSBT_TRANSIENTWINDOW = 3  # acrylic
+
+#: WinForms' default form colour.  pywebview leaves it in place on a transparent
+#: window (it makes the *webview* background transparent instead), and it is that
+#: opaque background — not the blur — that shows through the card.  It has to be
+#: punched out with a layered colour key, otherwise the desktop never shows through.
+GLASS_FORM_BACKGROUND = 0x00F0F0F0
+WS_EX_LAYERED = 0x00080000
+LWA_COLORKEY = 0x00000001
+LWA_ALPHA = 0x00000002
 HWND_TOPMOST = -1
 HWND_NOTOPMOST = -2
 SWP_NOSIZE = 0x0001
@@ -230,6 +244,12 @@ _declare(_user32, "ShowWindow", [ctypes.c_void_p, ctypes.c_int], ctypes.c_bool)
 _declare(_user32, "GetDpiForWindow", [ctypes.c_void_p], ctypes.c_uint)
 _declare(_user32, "GetWindowLongW", [ctypes.c_void_p, ctypes.c_int], ctypes.c_long)
 _declare(_user32, "SetWindowLongW", [ctypes.c_void_p, ctypes.c_int, ctypes.c_long], ctypes.c_long)
+_declare(
+    _user32,
+    "SetLayeredWindowAttributes",
+    [ctypes.c_void_p, ctypes.c_uint, ctypes.c_ubyte, ctypes.c_uint],
+    ctypes.c_bool,
+)
 _declare(_user32, "GetCursorPos", [ctypes.POINTER(_Point)], ctypes.c_bool)
 _declare(_user32, "GetAsyncKeyState", [ctypes.c_int], ctypes.c_short)
 _declare(_user32, "IsIconic", [ctypes.c_void_p], ctypes.c_bool)
@@ -237,6 +257,8 @@ _declare(_user32, "IsWindowVisible", [ctypes.c_void_p], ctypes.c_bool)
 _declare(_user32, "WindowFromPoint", [_Point], ctypes.c_void_p)
 _declare(_user32, "GetClassNameW", [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int], ctypes.c_int)
 _declare(_user32, "GetAncestor", [ctypes.c_void_p, ctypes.c_uint], ctypes.c_void_p)
+_declare(_user32, "GetTopWindow", [ctypes.c_void_p], ctypes.c_void_p)
+_declare(_user32, "GetWindow", [ctypes.c_void_p, ctypes.c_uint], ctypes.c_void_p)
 _declare(_user32, "GetWindowTextW", [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int], ctypes.c_int)
 _declare(_user32, "GetWindowThreadProcessId", [ctypes.c_void_p, ctypes.c_void_p], ctypes.c_ulong)
 _declare(_user32, "EnumWindows", [ctypes.c_void_p, ctypes.c_void_p], ctypes.c_bool)
@@ -401,9 +423,76 @@ def _round_window(handle: int, radius: int) -> None:
         log(f"could not round the window: {error}")
 
 
-def enable_glass(handle: int, radius: int, tint: int) -> bool:
-    """Acrylic blur + rounded shape.  False means no blur, tint only."""
-    blurred = _set_accent(handle, ACCENT_ENABLE_ACRYLICBLURBEHIND, tint)
+def _set_backdrop(handle: int, kind: int) -> bool:
+    """Ask DWM for a system backdrop (acrylic).  False = this build says no.
+
+    This is the modern path: the accent policy below still returns success on
+    Windows 11 but is *ignored*, which silently left the window opaque — the card
+    turned milky grey on build 26200 while every call reported success.
+    """
+    value = ctypes.c_int(kind)
+    try:
+        result = _dwmapi.DwmSetWindowAttribute(
+            handle, DWMWA_SYSTEMBACKDROP_TYPE, ctypes.byref(value), ctypes.sizeof(value)
+        )
+        return int(result) == 0
+    except Exception:
+        return False
+
+
+def _punch_background(handle: int, key: int = GLASS_FORM_BACKGROUND) -> bool:
+    """Make the window's own background transparent, leaving everything else.
+
+    Everything else about transparency depends on this.  With the window painting an
+    opaque background, both the acrylic accent and the modern system backdrop are
+    hidden behind it — which is exactly how the card ended up an opaque milky slab
+    while every call reported success.
+    """
+    try:
+        ex_style = int(_user32.GetWindowLongW(ctypes.c_void_p(handle), GWL_EXSTYLE))
+        if not ex_style & WS_EX_LAYERED:
+            _user32.SetWindowLongW(
+                ctypes.c_void_p(handle), GWL_EXSTYLE, ex_style | WS_EX_LAYERED
+            )
+        return bool(
+            _user32.SetLayeredWindowAttributes(ctypes.c_void_p(handle), key, 255, LWA_COLORKEY)
+        )
+    except Exception as error:
+        log(f"could not punch the window background out: {error}")
+        return False
+
+
+def _unpunch_background(handle: int) -> None:
+    """Put the window back to fully opaque (the Glass switch is off)."""
+    try:
+        _user32.SetLayeredWindowAttributes(ctypes.c_void_p(handle), 0, 255, LWA_ALPHA)
+        ex_style = int(_user32.GetWindowLongW(ctypes.c_void_p(handle), GWL_EXSTYLE))
+        _user32.SetWindowLongW(
+            ctypes.c_void_p(handle), GWL_EXSTYLE, ex_style & ~WS_EX_LAYERED
+        )
+    except Exception as error:
+        log(f"could not restore the window background: {error}")
+
+
+def enable_glass(handle: int, radius: int, tint: int) -> tuple[bool, bool]:
+    """Transparent glass.  Returns (blur applied, background punched out)."""
+    # Dark mode first, so any blur tints to match the card rather than to the system
+    # theme.
+    try:
+        dark = ctypes.c_int(1)
+        _dwmapi.DwmSetWindowAttribute(
+            handle, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(dark), ctypes.sizeof(dark)
+        )
+    except Exception:
+        pass
+    keyed = _punch_background(handle)
+    # Blur behind those holes: the supported system backdrop where it exists, and the
+    # legacy accent as a fallback for older builds.  Note that the accent still
+    # reports success on Windows 11 build 26200 and is then ignored, so it must never
+    # be the only mechanism.
+    blurred = _set_backdrop(handle, DWMSBT_TRANSIENTWINDOW)
+    if not blurred:
+        blurred = _set_accent(handle, ACCENT_ENABLE_ACRYLICBLURBEHIND, tint)
     try:
         preference = ctypes.c_int(DWMWCP_ROUND)
         _dwmapi.DwmSetWindowAttribute(
@@ -415,10 +504,12 @@ def enable_glass(handle: int, radius: int, tint: int) -> bool:
     except Exception:
         pass
     _round_window(handle, radius)
-    return blurred
+    return blurred, keyed
 
 
 def disable_glass(handle: int) -> None:
+    _unpunch_background(handle)
+    _set_backdrop(handle, DWMSBT_AUTO)
     _set_accent(handle, ACCENT_DISABLED, 0)
     try:
         _user32.SetWindowRgn(handle, None, True)
@@ -452,10 +543,12 @@ def minimized_or_hidden(handle: int) -> bool:
 #: Windows' three-finger "show desktop" swipe and Win+D are the same shortcut.
 VK_LWIN, VK_D, KEYEVENTF_KEYUP = 0x5B, 0x44, 0x0002
 
-#: The shell's own desktop windows: the wallpaper/icon host and the taskbar.
-DESKTOP_CLASSES = ("Progman", "WorkerW", "SHELLDLL_DefView", "SysListView32", "Shell_TrayWnd")
+#: The shell's desktop windows.  Only the top-level ones matter for the Z-order
+#: walk below; the icon host (SysListView32 / SHELLDLL_DefView) is a child of one.
+DESKTOP_CLASSES = ("Progman", "WorkerW")
 
 GA_ROOT = 2
+GW_HWNDNEXT = 2
 
 
 def window_class(handle: int) -> str:
@@ -465,44 +558,28 @@ def window_class(handle: int) -> str:
 
 
 def desktop_covering(handle: int) -> bool:
-    """Is the card buried by the *desktop* (rather than by an app window)?
+    """Is the card behind the *desktop* (show desktop) rather than behind an app?
 
-    "Show desktop" (Win+D, or the three-finger swipe) does not minimize this
-    card — the guard refuses that — but the shell raises the desktop layer above
-    everything, so the card ends up visible, un-minimized, and hidden behind the
-    wallpaper.  That is what the user actually sees when they say "the widget goes
-    too with the desktop".
+    "Show desktop" (Win+D, or the three-finger swipe) does not minimize this card —
+    the guard refuses that — but the shell raises the desktop layer above it, so the
+    card ends up visible, un-minimized and hidden behind the wallpaper.  That is what
+    the user sees when they say "the widget goes too with the desktop".
 
-    Two questions, asked over several points of the card rather than just its
-    centre: does *any* of them still land on the card (then part of it is visible,
-    so nothing needs doing), and does any of them land on a desktop window (an app
-    window covering the card must NOT count, or the card would start floating over
-    the user's other windows)?
+    This walks the top-level Z-order from the front and reports what it meets first:
+    the card itself (fine), a desktop window (buried — lift the card back over it), or
+    a normal window (the user's app, which the card is *meant* to sit behind).  A
+    WindowFromPoint test cannot be used: the card is a layered window with its
+    background punched out, so hit-testing skips straight past it and every point on
+    the card reports whatever is behind it — it looked permanently buried.
     """
-    rect = window_rect(handle)
-    if not rect:
-        return False
-    left, top, right, bottom = rect
-    inset_x = max(2, (right - left) // 8)
-    inset_y = max(2, (bottom - top) // 8)
-    points = [
-        ((left + right) // 2, (top + bottom) // 2),
-        (left + inset_x, top + inset_y),
-        (right - inset_x, top + inset_y),
-        (left + inset_x, bottom - inset_y),
-        (right - inset_x, bottom - inset_y),
-    ]
-    on_desktop = False
-    for x, y in points:
-        under = int(_user32.WindowFromPoint(_Point(x, y)) or 0)
-        if not under:
-            continue
-        root = int(_user32.GetAncestor(ctypes.c_void_p(under), GA_ROOT) or under)
-        if root == handle:
-            return False  # part of the card is on screen — nothing to fix
-        if window_class(under) in DESKTOP_CLASSES:
-            on_desktop = True
-    return on_desktop
+    current = int(_user32.GetTopWindow(None) or 0)
+    while current:
+        if current == handle:
+            return False
+        if window_class(current) in DESKTOP_CLASSES:
+            return True
+        current = int(_user32.GetWindow(ctypes.c_void_p(current), GW_HWNDNEXT) or 0)
+    return False
 
 
 WNDPROC = ctypes.WINFUNCTYPE(
@@ -973,6 +1050,9 @@ class Widget:
         self.guard: MinimizeGuard | None = None
         self._restores = 0
         self._on_desktop_layer = False
+        # The glass is re-applied once the page is alive; see boot_report.
+        self._glass_ready = False
+        self.glass_on = bool(self.config.get("glass", True))
         # (when the countdown was computed, how many seconds were left)
         self._clock: tuple[float, float] | None = None
         # Glass density, sampled from the desktop (see watch_glass).
@@ -984,6 +1064,10 @@ class Widget:
         state = engine.build_state(tz_id=self.config["tz"], holidays=self.holidays)
         state["prefs"] = self.prefs()
         state["glass"] = self.glass_mode
+        # With the glass off there is no native blur, and without the blur the
+        # window is not transparent either — so the card has to paint itself solid
+        # rather than show white text on the window's own light background.
+        state["glass_enabled"] = self.glass_on
         # Anchor for the host-side clock (see watch_clock): the page counts down on
         # its own, but the host re-states this number every second in case the
         # renderer's timers have been throttled.
@@ -1019,6 +1103,11 @@ class Widget:
         try:
             if self.hwnd:
                 set_visible(self.hwnd, visible)
+                if visible and not self._glass_ready:
+                    return  # still starting up; the page-ready pass handles it
+                if visible:
+                    # Showing a window again can drop the DWM backdrop with it.
+                    self.set_glass(bool(self.config.get("glass", True)), why="shown again")
             elif self.window and visible:
                 self.window.show()
             elif self.window:
@@ -1050,16 +1139,21 @@ class Widget:
     def glass_tint(self) -> int:
         return GLASS_TINT_DENSE if self.glass_mode == "dense" else GLASS_TINT_CLEAR
 
-    def set_glass(self, enabled: bool) -> None:
+    def set_glass(self, enabled: bool, why: str = "") -> None:
         self.config["glass"] = bool(enabled)
+        self.glass_on = bool(enabled)
         self.save()
         if not self.hwnd:
             log("glass preference saved (window handle not available yet)")
             return
+        reason = f", {why}" if why else ""
         try:
             if enabled:
-                blurred = enable_glass(self.hwnd, GLASS_RADIUS, self.glass_tint())
-                log(f"glass on (acrylic={'yes' if blurred else 'unavailable, shade only'})")
+                blurred, keyed = enable_glass(self.hwnd, GLASS_RADIUS, self.glass_tint())
+                log(
+                    f"glass on (blur={'yes' if blurred else 'no'}, "
+                    f"background={'punched out' if keyed else 'opaque'}{reason})"
+                )
             else:
                 disable_glass(self.hwnd)
                 log("glass off")
@@ -1071,6 +1165,21 @@ class Widget:
         if self.hwnd and self.config.get("glass", True):
             enable_glass(self.hwnd, GLASS_RADIUS, self.glass_tint())
         self.push()
+
+    def settle_glass(self) -> None:
+        """Re-apply the glass a few times while the window finishes appearing.
+
+        Applying it once is not reliable: pywebview's transparent-window start-up
+        hides and re-shows the window, and DWM drops the backdrop when that happens,
+        leaving the card opaque and milky with nothing in the log to show for it.
+        Re-running it is idempotent and costs nothing, so: page ready, then settle.
+        """
+        for label, delay in (("page ready", 0.0), ("+0.5s", 0.5), ("+2s", 1.5), ("+5s", 3.0)):
+            if delay:
+                time.sleep(delay)
+            if self.stop.is_set():
+                return
+            self.set_glass(bool(self.config.get("glass", True)), why=label)
 
     def watch_clock(self) -> None:
         """Drive the countdown from the host as well as from the page.
@@ -1841,6 +1950,15 @@ class Api:
     def boot_report(self, stage: str, detail: str = "") -> None:
         """Boot trace from the page, so a UI that never comes up is diagnosable."""
         log(f"page: {stage}" + (f" ({detail})" if detail else ""))
+        if not self._widget._glass_ready:
+            # The glass is applied as the window is created, but pywebview hides and
+            # re-shows a transparent window while it starts, which throws the DWM
+            # backdrop away — the card then sat there opaque and milky because every
+            # call had reported success.
+            self._widget._glass_ready = True
+            threading.Thread(
+                target=self._widget.settle_glass, name="glass-settle", daemon=True
+            ).start()
 
     def quit_app(self) -> None:
         self._widget.quit()

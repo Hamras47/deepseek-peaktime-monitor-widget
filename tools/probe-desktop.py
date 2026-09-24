@@ -5,13 +5,10 @@
 Without ``--send`` it only reports the widget's state.  With ``--send`` it
 presses Win+D (the same thing the three-finger "show desktop" swipe does),
 reports again, presses Win+D a second time to put the desktop back, and reports
-a third time.  That is the honest way to tell the three cases apart:
-
-  minimized     -> IsIconic true, or the window is not visible at all
-  covered       -> visible and not iconic, but the window under the card's centre
-                   is the desktop (Progman / WorkerW / SysListView32), i.e. the
-                   shell raised the desktop over the card
-  still on top  -> the card is the window at its own centre
+a third time.  It reports the app's own answer (``app.desktop_covering``, which
+walks the top-level Z-order) plus what hit-testing sees — the latter is only FYI:
+the card is a layered window with its background punched out, so WindowFromPoint
+skips past it and names whatever is behind.
 """
 
 from __future__ import annotations
@@ -57,15 +54,13 @@ def report(label: str, handle: int) -> None:
     centre = app._Point((left + right) // 2, (top + bottom) // 2)
     under = int(_user32.WindowFromPoint(centre) or 0)
     under_class = class_of(under) if under else "?"
-    covered = under != handle and under_class in DESKTOP_CLASSES
+    covered = app.desktop_covering(handle)
     print(
         f"{label:<22} rect={left},{top} {right - left}x{bottom - top} "
         f"visible={bool(_user32.IsWindowVisible(ctypes.c_void_p(handle)))} "
         f"iconic={bool(_user32.IsIconic(ctypes.c_void_p(handle)))} "
         f"topmost={topmost_of(handle)}  "
-        f"under centre -> {under_class or '?'}"
-        f"{f' (topmost={topmost_of(under)})' if covered else ''}"
-        f"{'  (the desktop is covering it)' if covered else ''}"
+        f"desktop covering it: {covered}  (hit-test sees {under_class or '?'})"
     )
 
 

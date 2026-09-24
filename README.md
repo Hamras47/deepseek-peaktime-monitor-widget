@@ -16,7 +16,8 @@ which only exists on the desktop:
 
 * **Transparent glass** — the desktop shows through it; the card itself is a
   colourless shade with white text. It thickens slightly when it sits over a
-  bright window so the text stays readable.
+  bright window so the text stays readable, and it goes solid dark if you switch
+  the glass off (without the blur there is nothing to be transparent with).
 * **Stays on the desktop** — it lives on the wallpaper and stays there when you
   show the desktop (Win+D or the three-finger swipe), but goes behind your
   windows when you get back to work. **Always on top** is a switch, not a
