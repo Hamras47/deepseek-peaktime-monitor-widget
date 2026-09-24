@@ -259,3 +259,29 @@ a direct minimize — to prove the card stays on screen.
   that dark text clears 4.5:1 over any desktop, which is what the harness checks.
 * Unhandled errors go to `widget.log`; under `pythonw` there is nowhere else for
   them to go.
+
+## The countdown stopped once (2026-09-24)
+- Symptom: the card sat behind other windows for a while and the countdown froze on
+  a stale number — the digits never moved again until the app was restarted.
+- Not the JS: `tick()` computes the remaining time from an absolute anchor
+  (`Date.now()`), so a *throttled* timer would still show the right number whenever
+  it ran, and it recomputes every 250 ms. The timers were not being throttled, they
+  were **frozen**: Chromium freezes the timers of a window that is occluded by other
+  windows (the card is normally behind the user's apps — that is the point of it).
+- Proof, without guessing: the page re-syncs and reports its geometry every 5
+  minutes, and `widget.log` showed **no `page: layout` report at all** for 25 minutes
+  after the last interaction, i.e. no page timer fired. Same restart, same window,
+  nothing else changed.
+- Fix: the host drives the clock as well. Every second a Python thread pushes the
+  remaining seconds (`window.__widgetTick(seconds)`), which re-anchors the page's own
+  countdown; the page keeps ticking locally for smoothness when it is visible. A
+  *forced* script call still runs in an occluded window — the UI test already relies
+  on that to click switches — so this path cannot be throttled.
+- Self-check, at ticks 5, 60 and every 10 minutes: `clock watch: pushed 4420s, the
+  page shows '1:13:40'`. The pushed number and the rendered number must agree, which
+  is what proved the fix while the card was behind Firefox.
+- Related tool: `tools/compare-shots.py` compares two captures of the card and says
+  whether the countdown moved. A plain pixel diff does **not** work — the card is
+  translucent, so the wallpaper showing through changes every pixel, and the status
+  dot pulses by design — so it isolates near-white glyph pixels (245+) in the
+  countdown band and compares only those.

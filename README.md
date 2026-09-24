@@ -93,6 +93,9 @@ Preferences, position and size live in `config.json` next to the app.
 
 ## Notes
 
+* The countdown is driven by the app, not by the page, so it keeps running while
+  the card sits behind other windows — Windows throttles and then freezes a covered
+  window's own timers, which used to leave a stale number on the card.
 * The holiday list is generated from the official Chinese government papers by
   `tools/build_holidays.py`; rerun it when a new year is published.
 * `app.py --ui-test` drives the real window through its whole interactive surface

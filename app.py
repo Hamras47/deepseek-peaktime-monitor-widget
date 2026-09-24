@@ -973,6 +973,8 @@ class Widget:
         self.guard: MinimizeGuard | None = None
         self._restores = 0
         self._on_desktop_layer = False
+        # (when the countdown was computed, how many seconds were left)
+        self._clock: tuple[float, float] | None = None
         # Glass density, sampled from the desktop (see watch_glass).
         self.glass_mode = "clear"
 
@@ -982,6 +984,10 @@ class Widget:
         state = engine.build_state(tz_id=self.config["tz"], holidays=self.holidays)
         state["prefs"] = self.prefs()
         state["glass"] = self.glass_mode
+        # Anchor for the host-side clock (see watch_clock): the page counts down on
+        # its own, but the host re-states this number every second in case the
+        # renderer's timers have been throttled.
+        self._clock = (time.monotonic(), float(state["countdown"]["seconds"]))
         return state
 
     def prefs(self) -> dict:
@@ -1065,6 +1071,42 @@ class Widget:
         if self.hwnd and self.config.get("glass", True):
             enable_glass(self.hwnd, GLASS_RADIUS, self.glass_tint())
         self.push()
+
+    def watch_clock(self) -> None:
+        """Drive the countdown from the host as well as from the page.
+
+        Chromium throttles the timers of an occluded window and eventually freezes
+        them, which stopped the countdown while the card sat behind the user's
+        apps.  A forced script call still runs, so the host re-anchors the page
+        once a second — cheap enough, and it cannot be throttled.
+        """
+        log("clock watch started")
+        pushed = 0
+        while not self.stop.is_set():
+            self.stop.wait(1.0)
+            if self.stop.is_set():
+                return
+            anchor = self._clock
+            if not (self.window and anchor):
+                continue
+            try:
+                at, seconds = anchor
+                remaining = max(0, int(round(seconds - (time.monotonic() - at))))
+                self.window.evaluate_js(
+                    f"window.__widgetTick && window.__widgetTick({remaining})"
+                )
+                pushed += 1
+                # Read the page back at the start and then every 10 minutes: confirms
+                # the pushed number actually lands while the renderer's own timers
+                # are throttled behind other windows (which is what stopped the
+                # countdown), and gives support a line to look at.
+                if pushed in (5, 60) or pushed % 600 == 0:
+                    shown = self.window.evaluate_js(
+                        "document.getElementById('countdown').textContent"
+                    )
+                    log(f"clock watch: pushed {remaining}s, the page shows {shown!r}")
+            except Exception:
+                log("clock watch error:\n" + traceback.format_exc())
 
     def watch_glass(self) -> None:
         """Keep the glass density matched to the desktop behind the card.
@@ -1507,6 +1549,7 @@ class Widget:
         threading.Thread(target=self.monitor, name="monitor", daemon=True).start()
         threading.Thread(target=self.enforce_size, name="size-watch", daemon=True).start()
         threading.Thread(target=self.watch_desktop, name="desktop-watch", daemon=True).start()
+        threading.Thread(target=self.watch_clock, name="clock-watch", daemon=True).start()
         threading.Thread(target=self.watch_glass, name="glass-watch", daemon=True).start()
         self.push()
 

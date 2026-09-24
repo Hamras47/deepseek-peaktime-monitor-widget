@@ -346,6 +346,19 @@ async function bootFromPreview() {
   window.addEventListener('error', (event) => report('js error', event.message));
 })();
 
+/* The host re-anchors the countdown once a second.  Chromium throttles — and
+   eventually freezes — the timers of a window that is occluded by other windows,
+   which stopped the countdown dead while the card sat behind the user's apps.  A
+   forced script call still runs (the UI test relies on that), so this is the one
+   path that works even then. */
+window.__widgetTick = (seconds) => {
+  if (!Number.isFinite(seconds)) return;
+  previewMode = false;
+  frozen = false;
+  anchor = { ms: Date.now(), remaining: seconds };
+  tick();
+};
+
 /* Called by app.py when the price flips, so the card updates the moment the
    host notices instead of waiting for the next local resync. */
 window.__widgetPush = (next) => {
