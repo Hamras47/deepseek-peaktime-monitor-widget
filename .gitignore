@@ -1,0 +1,10 @@
+# Local machine state — regenerated on demand.
+.venv/
+tmp/
+widget.log
+config.json
+assets/icon.ico
+ui/state.preview.json
+__pycache__/
+*.pyc
+.ruff_cache/
