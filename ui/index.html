@@ -11,6 +11,14 @@
       .widget[data-draggable="false"] .grip {
         display: none;
       }
+      /* Five switches stacked, plus the timezone chips, did not fit a short card: the
+         last switch sat below the reachable area and could not be clicked. Pairing them
+         up costs one row and keeps every switch in reach. */
+      .switches {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 4px 6px;
+      }
     </style>
   </head>
   <body>

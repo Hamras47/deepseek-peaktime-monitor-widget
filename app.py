@@ -1592,11 +1592,6 @@ class Widget:
                 self.toggle_draggable,
                 checked=lambda _item: bool(self.config.get("draggable", True)),
             ),
-            pystray.MenuItem(
-                "Draggable",
-                self.toggle_draggable,
-                checked=lambda _item: bool(self.config.get("draggable", True)),
-            ),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Open widget folder", self.open_folder),
             pystray.MenuItem("Quit", self.quit),
@@ -2089,8 +2084,6 @@ class Api:
             widget.set_glass(bool(value))
         elif key == "notify":
             widget.config["notify"] = bool(value)
-        elif key == "draggable":
-            widget.config["draggable"] = bool(value)
         elif key == "draggable":
             widget.config["draggable"] = bool(value)
         widget.save()
