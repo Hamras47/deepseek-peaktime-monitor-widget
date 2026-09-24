@@ -435,6 +435,27 @@ def build_state(
     flip_local = flip.astimezone(zone)
     remaining = (flip - now).total_seconds()
 
+    # "Peak starts 04:00 AM" is a lie by omission when the window still has days to
+    # run — a weekend plus a Chinese holiday makes a 3-day off-peak stretch, and the
+    # line then reads like a broken countdown.  Say which day, and drop the offset
+    # there: the date is the part that answers the question (the tooltip keeps both).
+    days_away = (flip_local.date() - local_now.date()).days
+    if days_away <= 0:
+        day_short, day_long, day_suffix = "", "", f" {abbr}"
+    elif days_away == 1:
+        day_short = day_long = "tomorrow, "
+        day_suffix = f" {abbr}"
+    else:
+        # The card only has room for the weekday; the full date goes in `line`,
+        # which the tray, the notifications and the tooltip use.
+        day_short = f"{fmt_weekday(flip_local)} "
+        day_long = f"{fmt_weekday(flip_local)} {flip_local.day} {flip_local.strftime('%b')}, "
+        day_suffix = ""
+    next_line = (
+        f"{next_change_phrase(peak_after)} {day_long}{fmt_clock(flip_local)}{day_suffix}"
+    )
+    next_day = f"{day_short}{fmt_clock(flip_local)}"
+
     return {
         "generated_at": _iso(now),
         "epoch_ms": int(now.timestamp() * 1000),
@@ -479,8 +500,12 @@ def build_state(
             "phrase": next_change_phrase(peak_after),
             "clock": fmt_clock(flip_local),
             "weekday": fmt_weekday(flip_local),
+            # What the card shows next to the clock: "Mon 04:00 AM", or the plain
+            # clock with the offset when the change is today.
+            "day": day_short,
+            "day_clock": next_day,
             "abbr": abbr,
-            "line": f"{next_change_phrase(peak_after)} {fmt_clock(flip_local)} {abbr}",
+            "line": next_line,
         },
         "rows": _rows(now, zone, holidays, horizon),
         "segments": _segments(now, zone, holidays),

@@ -189,9 +189,23 @@ class Payload(unittest.TestCase):
         self.assertEqual(self.state["next"]["mode_name"], "Peak")
         self.assertEqual(self.state["next"]["mode_label"], "PEAK")
         self.assertEqual(
-            self.state["next"]["line"], "Peak starts 06:30 AM GMT+5:30"
+            self.state["next"]["line"], "Peak starts tomorrow, 06:30 AM GMT+5:30"
         )
         self.assertEqual(self.state["tz"]["abbr"], "GMT+5:30")
+
+    def test_next_line_names_the_day_when_it_is_not_today(self):
+        """A 3-day off-peak stretch (weekend + Mid-Autumn) must not read like a bug."""
+        # Thu 24 Sep 2026 11:00 UTC: off-peak, and the next peak is Mon 28 Sep
+        # because 25-27 Sep are the Mid-Autumn Festival plus the weekend.
+        holiday_state = S.build_state(at("2026-09-24T11:00"), "Asia/Qatar", HOLIDAYS)
+        self.assertEqual(holiday_state["countdown"]["seconds"] >= 3 * 86400, True)
+        self.assertEqual(holiday_state["next"]["line"], "Peak starts Mon 28 Sep, 04:00 AM")
+        # The card has less room than the notification, so it shows the weekday only.
+        self.assertEqual(holiday_state["next"]["day"], "Mon ")
+        self.assertEqual(holiday_state["next"]["day_clock"], "Mon 04:00 AM")
+        # A flip later the same day keeps the short form with the offset.
+        today_state = S.build_state(at("2026-09-22T11:00"), "Asia/Qatar", HOLIDAYS)
+        self.assertEqual(today_state["next"]["line"], "Peak starts tomorrow, 04:00 AM GMT+3")
 
     def test_window_table_matches_the_reference_design(self):
         rows = self.state["rows"]

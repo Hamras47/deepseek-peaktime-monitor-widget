@@ -111,15 +111,25 @@ function render(next) {
   lastMode = next.mode;
 
   el('badge-label').textContent = next.mode_label;
-  el('badge').title = rulesTitle(next.rules);
+  el('badge').title = [
+    rulesTitle(next.rules),
+    holidayNote(next.holiday),
+    next.next.line,
+  ]
+    .filter(Boolean)
+    .join('\n');
 
   const digits = el('countdown');
   digits.textContent = next.countdown.text;
   digits.dataset.long = String(Boolean(next.countdown.long));
   el('countdown-suffix').textContent = next.countdown.suffix;
 
+  // When the next change is not today, the day is what makes a long off-peak
+  // stretch read as correct rather than broken, and it takes the offset's place.
+  const day = next.next.day || '';
+  const tail = day ? '' : ` ${esc(next.next.abbr)}`;
   el('next-line').innerHTML =
-    `${esc(next.next.phrase)} <b>${esc(next.next.clock)}</b> ${esc(next.next.abbr)}`;
+    `${esc(next.next.phrase)} ${esc(day)}<b>${esc(next.next.clock)}</b>${tail}`;
 
   renderChips(next.tz);
   if (next.prefs) renderToggles(next.prefs);
@@ -134,6 +144,18 @@ function rulesTitle(rules) {
     `Peak ${rules.peak_utc.join(' & ')} UTC, ${rules.days}. ` +
     'Weekends and Chinese public holidays are off-peak all day.'
   );
+}
+
+/** Why a window can run for days: a public holiday plus the weekend it touches. */
+function holidayNote(holiday) {
+  if (!holiday) return '';
+  if (holiday.today) {
+    return `${holiday.today.name} today — Chinese public holidays are off-peak all day.`;
+  }
+  const next = (holiday.upcoming || [])[0];
+  if (!next || next.in_days > 10) return '';
+  const when = next.in_days === 1 ? 'tomorrow' : `in ${next.in_days} days`;
+  return `${next.name} ${when} — Chinese public holidays are off-peak all day.`;
 }
 
 /**
