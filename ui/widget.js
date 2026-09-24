@@ -121,6 +121,7 @@ function render(next) {
 
   const digits = el('countdown');
   digits.textContent = next.countdown.text;
+  el('widget').dataset.draggable = String((next.prefs || {}).draggable !== false);
   digits.dataset.long = String(Boolean(next.countdown.long));
   el('countdown-suffix').textContent = next.countdown.suffix;
 
@@ -271,9 +272,13 @@ function setSheet(open) {
    say where the drag started. */
 
 const INTERACTIVE = 'button, input, select, textarea, a, .chip, .switch, .grip';
+// The host refuses gestures while the card is locked; checking here as well just saves
+// a round trip and keeps the cursor from looking draggable.
+const locked = () => Boolean(state && state.prefs && state.prefs.draggable === false);
 
 document.querySelector('.card').addEventListener('mousedown', (event) => {
   if (event.button !== 0 || event.target.closest(INTERACTIVE)) return;
+  if (locked()) return;
   report('gesture', 'move');
   call('begin_move');
 });
@@ -306,6 +311,7 @@ bindSwitch('sw-on-top', 'on_top');
 bindSwitch('sw-autostart', 'autostart');
 bindSwitch('sw-notify', 'notify');
 bindSwitch('sw-glass', 'glass');
+bindSwitch('sw-draggable', 'draggable');
 
 /* --------------------------------------------------------------- boot --- */
 

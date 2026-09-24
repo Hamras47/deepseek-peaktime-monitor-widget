@@ -559,6 +559,100 @@ def window_class(handle: int) -> str:
     return buffer.value
 
 
+def desktop_in_front() -> bool:
+    """Is the shell's desktop what the screen is showing?  (Win+D / the swipe.)
+
+    Asked at points spread across the screen rather than about the card itself.  The
+    card's own Z-order decided whether the card was *covered*, which flapped: lifting
+    the card made it "not buried", the topmost flag went straight back, and the two
+    states alternated once per poll.  A majority of desktop hits across the screen
+    means the desktop really is showing, and the answer does not change when the card
+    moves in the Z-order.
+    """
+    width = int(_user32.GetSystemMetrics(0))
+    height = int(_user32.GetSystemMetrics(1))
+    if width <= 0 or height <= 0:
+        return False
+    points = ((0.5, 0.5), (0.3, 0.3), (0.7, 0.3), (0.3, 0.7), (0.7, 0.7))
+    hits = 0
+    for fraction_x, fraction_y in points:
+        point = _Point(int(width * fraction_x), int(height * fraction_y))
+        target = int(_user32.WindowFromPoint(point) or 0)
+        if not target:
+            continue
+        root = int(_user32.GetAncestor(ctypes.c_void_p(target), GA_ROOT) or target)
+        if window_class(root) in DESKTOP_CLASSES or window_class(target) in (
+            "SysListView32",
+            "SHELLDLL_DefView",
+        ):
+            hits += 1
+    return hits * 2 > len(points)
+
+
+#: Windows that are part of the shell rather than the user's work.  They sit near the
+#: front and must not count as "an app window" when the card is placed back.
+NON_APP_CLASSES = DESKTOP_CLASSES + (
+    "Shell_TrayWnd",
+    "Shell_SecondaryTrayWnd",
+    "NotifyIconOverflowWindow",
+    "Windows.UI.Core.CoreWindow",
+    "XamlExplorerHostIslandWindow",
+    "TaskListThumbnailWnd",
+    "MultitaskingViewFrame",
+    "ForegroundStaging",
+)
+
+
+def is_app_window(handle: int) -> bool:
+    """Is this one of the user's own windows?
+
+    The shell is full of near-invisible helpers that sit at the front (IME windows,
+    thumbnails, staging hosts) and they are NOT in the documented desktop classes, so
+    a class list alone is not enough: those helpers were picked as "the lowest window"
+    and the card was inserted under them.  Visible, not minimized, not a tool window and
+    carrying a title is what an app looks like.
+    """
+    if not handle:
+        return False
+    if not bool(_user32.IsWindowVisible(handle)) or bool(_user32.IsIconic(handle)):
+        return False
+    if window_class(handle) in NON_APP_CLASSES:
+        return False
+    if int(_user32.GetWindowLongW(ctypes.c_void_p(handle), GWL_EXSTYLE)) & WS_EX_TOOLWINDOW:
+        return False
+    title = ctypes.create_unicode_buffer(256)
+    _user32.GetWindowTextW(ctypes.c_void_p(handle), title, 256)
+    return bool(title.value.strip())
+
+
+def send_to_desktop_layer(handle: int) -> bool:
+    """Put the card back on the desktop: below every app window, above the wallpaper.
+
+    Clearing WS_EX_TOPMOST is not enough.  The card keeps the Z-order slot it was
+    lifted to, so it stayed in front of the user's windows — which is exactly what
+    "press Win+D twice and the widget is on top of everything" looked like.  Windows'
+    own answer is to sit immediately above the desktop, so this finds the lowest app
+    window (the one directly above the desktop) and inserts the card just below it.
+    """
+    target = 0
+    current = int(_user32.GetTopWindow(None) or 0)
+    while current:
+        if current != handle and is_app_window(current):
+            target = current  # keep walking: the last app window is the lowest one
+        current = int(_user32.GetWindow(ctypes.c_void_p(current), GW_HWNDNEXT) or 0)
+    if not target:
+        return False
+    _user32.SetWindowPos(
+        ctypes.c_void_p(handle),
+        ctypes.c_void_p(target),
+        0,
+        0,
+        0,
+        0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+    )
+    return True
+
 def desktop_covering(handle: int) -> bool:
     """Is the card behind the *desktop* (show desktop) rather than behind an app?
 
@@ -840,6 +934,7 @@ def load_config() -> dict:
         "autostart": True,
         "glass": True,
         "stay_on_desktop": True,
+        "draggable": True,
         "auto_density": True,
         "window": dict(DEFAULT_WINDOW),
     }
@@ -1083,6 +1178,7 @@ class Widget:
             "autostart": autostart_installed(),
             "glass": bool(self.config.get("glass", True)),
             "stay_on_desktop": bool(self.config.get("stay_on_desktop", True)),
+            "draggable": bool(self.config.get("draggable", True)),
         }
 
     def save(self) -> None:
@@ -1300,11 +1396,24 @@ class Widget:
 
     def begin_move(self) -> None:
         """Start a window drag (called on mousedown over the card)."""
+        if not self.can_drag("move"):
+            return
         threading.Thread(target=self._gesture, args=("move",), daemon=True).start()
 
     def begin_resize(self) -> None:
         """Start a resize (called on mousedown over the corner grip)."""
+        if not self.can_drag("resize"):
+            return
         threading.Thread(target=self._gesture, args=("size",), daemon=True).start()
+
+    def can_drag(self, gesture: str) -> bool:
+        """Honour the Draggable lock.  The host decides, not the page: a page-side
+        guard could be bypassed by any stray script call, and the page and the host
+        would then disagree about whether the card may be moved."""
+        if bool(self.config.get("draggable", True)):
+            return True
+        log(f"{gesture} ignored (draggable is off)")
+        return False
 
     def _gesture(self, mode: str, sample=None) -> None:
         """Move or resize while the left button is held.
@@ -1475,6 +1584,16 @@ class Widget:
                 self.toggle_stay_on_desktop,
                 checked=lambda _item: bool(self.config.get("stay_on_desktop", True)),
             ),
+            pystray.MenuItem(
+                "Draggable",
+                self.toggle_draggable,
+                checked=lambda _item: bool(self.config.get("draggable", True)),
+            ),
+            pystray.MenuItem(
+                "Draggable",
+                self.toggle_draggable,
+                checked=lambda _item: bool(self.config.get("draggable", True)),
+            ),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Open widget folder", self.open_folder),
             pystray.MenuItem("Quit", self.quit),
@@ -1509,6 +1628,16 @@ class Widget:
             self.guard.enabled = wanted
         self.save()
         log(f"stay on desktop -> {wanted}")
+        self.refresh_tray()
+
+    def toggle_draggable(self, *_args) -> None:
+        """Lock the card where it is.  Once off, the host refuses both gestures, so
+        the card cannot be nudged by accident."""
+        wanted = not bool(self.config.get("draggable", True))
+        self.config["draggable"] = wanted
+        self.save()
+        log(f"draggable -> {wanted}")
+        self.push()
         self.refresh_tray()
 
     def toggle_autostart(self, *_args) -> None:
@@ -1611,17 +1740,29 @@ class Widget:
         restored windows on its own).  With "always on top" on, none of this
         runs — the card is meant to float there anyway.
         """
-        if not self.hwnd or bool(self.config["on_top"]):
+        if not self.hwnd:
             return
-        buried = desktop_covering(self.hwnd)
-        if buried and not self._on_desktop_layer:
-            set_topmost(self.hwnd, True)
-            self._on_desktop_layer = True
-            log("desktop shown — lifted the card back over it")
-        elif not buried and self._on_desktop_layer:
-            set_topmost(self.hwnd, False)
+        if desktop_in_front():
+            if not self._on_desktop_layer:
+                set_topmost(self.hwnd, True)
+                self._on_desktop_layer = True
+                log("desktop shown — lifted the card back over it")
+            return
+        if self._on_desktop_layer:
             self._on_desktop_layer = False
-            log("desktop hidden again — card back below the windows")
+            on_top = bool(self.config["on_top"])
+            set_topmost(self.hwnd, on_top)
+            if on_top:
+                log("desktop hidden again — card stays on top")
+            else:
+                # Clearing the topmost flag leaves the card at the front of the ordinary
+                # band, i.e. over the user's windows, so it has to be placed back.
+                placed = send_to_desktop_layer(self.hwnd)
+                log(
+                    "desktop hidden again — card placed back on the desktop"
+                    if placed
+                    else "desktop hidden again — card back below the windows"
+                )
 
     # ---------------------------------------------------------------- start
 
@@ -1645,8 +1786,13 @@ class Widget:
             log(f"always on top -> {bool(self.config['on_top'])}")
             if not bool(self.config["on_top"]) and bool(self.config.get("stay_on_desktop", True)):
                 # Start life on the desktop rather than on top of whatever happens
-                # to be open: that is where a desktop widget belongs.
+                # to be open: that is where a desktop widget belongs.  A new window
+                # starts at the front of the non-topmost band, so it has to be placed
+                # explicitly, or it sits over the user's windows until the next
+                # show-desktop cycle happens to move it.
                 self.stay_on_desktop()
+                send_to_desktop_layer(self.hwnd)
+                log("card placed on the desktop layer")
             self.guard = MinimizeGuard(self.hwnd)
             log(
                 "minimize guard installed (the card stays on the desktop)"
@@ -1672,7 +1818,7 @@ class Widget:
         loop the mouse drives but with synthetic input, so neither needs a real
         cursor.  Then it restores everything and quits.
         """
-        ids = "['sw-on-top','sw-notify','sw-glass','sw-autostart']"
+        ids = "['sw-on-top','sw-notify','sw-glass','sw-autostart','sw-draggable']"
         read = (
             f"{ids}.map(function (i) "
             "{ return document.getElementById(i).getAttribute('aria-checked'); }).join(',')"
@@ -1690,15 +1836,20 @@ class Widget:
             log(f"ui-test: switches after   = {after}")
             flipped = [a != b for a, b in zip(before.split(","), after.split(","))]
             log(
-                "ui-test: PASS — all four switches toggled"
-                if flipped and all(flipped) and len(flipped) == 4
-                else f"ui-test: FAIL — only {sum(flipped)}/4 switches toggled"
+                "ui-test: PASS — all five switches toggled"
+                if flipped and all(flipped) and len(flipped) == 5
+                else f"ui-test: FAIL — only {sum(flipped)}/5 switches toggled"
             )
             self.window.evaluate_js(click)
             time.sleep(3.0)
             log(f"ui-test: switches restored = {self.window.evaluate_js(read)}")
 
+            # The move/resize checks below need the gestures enabled, whatever the
+            # user's Draggable setting is.
+            was_draggable = bool(self.config.get("draggable", True))
+            self.config["draggable"] = True
             self.check_gestures()
+            self.config["draggable"] = was_draggable
             self.check_show_desktop()
             self.check_desktop_persistence()
         except Exception as error:
@@ -1935,6 +2086,10 @@ class Api:
             widget.set_glass(bool(value))
         elif key == "notify":
             widget.config["notify"] = bool(value)
+        elif key == "draggable":
+            widget.config["draggable"] = bool(value)
+        elif key == "draggable":
+            widget.config["draggable"] = bool(value)
         widget.save()
         log(f"pref {key} -> {value}")
         widget.refresh_tray()

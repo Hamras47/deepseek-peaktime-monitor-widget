@@ -6,6 +6,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>DeepSeek Peak / Off-Peak</title>
     <link rel="stylesheet" href="styles.css" />
+    <style>
+      /* With the card locked there is nothing to grab, so the marker goes away. */
+      .widget[data-draggable="false"] .grip {
+        display: none;
+      }
+    </style>
   </head>
   <body>
     <!-- One card only: badge + countdown + when it flips. Everything else lives
@@ -64,6 +70,8 @@
                     title="Windows notification when peak starts or ends">Notify</button>
             <button class="switch" id="sw-glass" type="button" role="switch" aria-checked="true"
                     title="Blur the desktop behind the card">Glass</button>
+            <button class="switch" id="sw-draggable" type="button" role="switch" aria-checked="true"
+                    title="Untick to lock the card in place: no moving and no resizing">Draggable</button>
           </div>
         </div>
 
