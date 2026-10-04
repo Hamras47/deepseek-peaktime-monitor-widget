@@ -209,6 +209,7 @@ function renderToggles(prefs) {
   el('sw-autostart').setAttribute('aria-checked', String(Boolean(prefs.autostart)));
   el('sw-notify').setAttribute('aria-checked', String(Boolean(prefs.notify)));
   el('sw-glass').setAttribute('aria-checked', String(Boolean(prefs.glass)));
+  el('sw-draggable').setAttribute('aria-checked', String(prefs.draggable !== false));
 }
 
 /* ------------------------------------------------------------- ticking --- */
