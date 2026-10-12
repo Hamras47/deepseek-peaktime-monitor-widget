@@ -210,6 +210,7 @@ function renderToggles(prefs) {
   el('sw-notify').setAttribute('aria-checked', String(Boolean(prefs.notify)));
   el('sw-glass').setAttribute('aria-checked', String(Boolean(prefs.glass)));
   el('sw-draggable').setAttribute('aria-checked', String(prefs.draggable !== false));
+  el('sw-bare').setAttribute('aria-checked', String(Boolean(prefs.bare)));
 }
 
 /* ------------------------------------------------------------- ticking --- */
@@ -313,6 +314,7 @@ bindSwitch('sw-autostart', 'autostart');
 bindSwitch('sw-notify', 'notify');
 bindSwitch('sw-glass', 'glass');
 bindSwitch('sw-draggable', 'draggable');
+bindSwitch('sw-bare', 'bare');
 
 /* --------------------------------------------------------------- boot --- */
 
@@ -403,3 +405,11 @@ window.__widgetPush = (next) => {
 window.__setGlass = (mode) => {
   document.getElementById('widget').dataset.glass = mode === 'dense' ? 'dense' : 'clear';
 };
+
+/* Right-click anywhere on the card opens the settings, like the other desktop widgets.
+   Text fields keep the normal menu (paste and so on). */
+document.addEventListener('contextmenu', (event) => {
+  if (event.target.closest('input, textarea, [contenteditable="true"]')) return;
+  event.preventDefault();
+  setSheet(true);
+});
