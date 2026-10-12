@@ -14,6 +14,14 @@ which only exists on the desktop:
 
 ![the running widget](doc/preview-glass.png)
 
+### No background
+
+Switch on **No background** (in the settings sheet, or the tray menu) and the card disappears:
+the widget is drawn straight onto your wallpaper, with softer text so it blends in. Right-click
+it for its menu, or choose *Show the glass card* to bring the card back.
+
+![The countdown with no background](doc/preview-no-background.png)
+
 * **Transparent glass** — the card is blended with the desktop behind it; the
   material itself is a colourless shade with white text. It thickens slightly when
   it sits over a bright window so the text stays readable, and it goes solid dark if
@@ -72,12 +80,12 @@ icon** for *Show / hide*, *Stay on desktop*, *Start with Windows* and *Quit*.
 
 ## Options
 
-Everything else hides behind the gear so the card stays a countdown:
+Everything else hides behind the gear (or right-click the card) so the card stays a countdown:
 
 ![the options sheet](doc/preview-settings.png)
 
-Timezone chips and four switches — Always on top, Start with Windows, Notify,
-Glass. The chips are named by their standard abbreviation rather than a country,
+Timezone chips and the switches — Always on top, Start with Windows, Notify,
+Glass, Draggable and No background. The chips are named by their standard abbreviation rather than a country,
 and the tooltip gives the full name:
 
 | chip | timezone | offset |
